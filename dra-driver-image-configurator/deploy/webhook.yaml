@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dra-driver-image-configurator-webhook
+  namespace: kube-system
+---
+
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: image-configurator-selfsigned
+spec:
+  selfSigned: {}
+---
+
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dra-driver-image-configurator-webhook
+  namespace: kube-system
+spec:
+  secretName: dra-driver-image-configurator-webhook-tls
+  dnsNames:
+    - dra-driver-image-configurator-webhook.kube-system.svc
+    - dra-driver-image-configurator-webhook.kube-system.svc.cluster.local
+  issuerRef:
+    name: image-configurator-selfsigned
+    kind: ClusterIssuer
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: dra-driver-image-configurator-webhook
+  namespace: kube-system
+spec:
+  selector:
+    app: dra-driver-image-configurator-webhook
+  ports:
+    - name: https
+      port: 443
+      targetPort: 9443
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dra-driver-image-configurator-webhook
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dra-driver-image-configurator-webhook
+  template:
+    metadata:
+      labels:
+        app: dra-driver-image-configurator-webhook
+    spec:
+      serviceAccountName: dra-driver-image-configurator-webhook
+      containers:
+        - name: webhook
+          image: registry.k8s.io/dra-driver-image-configurator:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/webhook"]
+          ports:
+            - containerPort: 9443
+              name: https
+          livenessProbe:
+            failureThreshold: 5
+            httpGet:
+              path: /readyz
+              port: https
+              scheme: HTTPS
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /readyz
+              port: https
+              scheme: HTTPS
+          volumeMounts:
+            - name: webhook-tls
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+      volumes:
+        - name: webhook-tls
+          secret:
+            secretName: dra-driver-image-configurator-webhook-tls
+---
+
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: dra-driver-image-configurator
+  annotations:
+    cert-manager.io/inject-ca-from: kube-system/dra-driver-image-configurator-webhook
+webhooks:
+  - name: resourceclaim.image-configurator.x-k8s.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    rules:
+      - apiGroups: ["resource.k8s.io"]
+        apiVersions: ["v1"]
+        resources: ["resourceclaims"]
+        operations: ["CREATE"]
+    clientConfig:
+      service:
+        name: dra-driver-image-configurator-webhook
+        namespace: kube-system
+        path: /validate-resourceclaim
+  - name: resourceclaimtemplate.image-configurator.x-k8s.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    rules:
+      - apiGroups: ["resource.k8s.io"]
+        apiVersions: ["v1"]
+        resources: ["resourceclaimtemplates"]
+        operations: ["CREATE"]
+    clientConfig:
+      service:
+        name: dra-driver-image-configurator-webhook
+        namespace: kube-system
+        path: /validate-resourceclaimtemplate

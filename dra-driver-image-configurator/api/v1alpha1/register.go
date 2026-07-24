@@ -12,8 +12,13 @@ var (
 	SchemeBuilder      = runtime.NewSchemeBuilder(addKnownTypes)
 	AddToScheme        = SchemeBuilder.AddToScheme
 
-	scheme = runtime.NewScheme()
-	Codec  = serializer.NewCodecFactory(scheme)
+	scheme  = runtime.NewScheme()
+	codec   = serializer.NewCodecFactory(scheme)
+	decoder = codec.UniversalDeserializer()
+)
+
+const (
+	DriverName = "image-configurator.x-k8s.io"
 )
 
 func init() {
