@@ -495,7 +495,7 @@ func TestCollectImageConfigs(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			configs, err := collectImageConfigs(context.Background(), tc.claims)
+			configs, err := (&PodReconciler{}).collectImageConfigs(tc.claims)
 			if len(tc.errMsg) > 0 {
 				if err == nil || !strings.Contains(err.Error(), tc.errMsg) {
 					t.Fatalf("expected error %v, got %v", tc.errMsg, err)

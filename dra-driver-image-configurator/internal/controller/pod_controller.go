@@ -9,7 +9,7 @@ import (
 	resourceapi "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/klog/v2"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -26,7 +26,8 @@ const DriverName = "image-configurator.x-k8s.io"
 // PodReconciler watches Pods nominated to a node and patches their
 // container images based on the associated ResourceClaim config.
 type PodReconciler struct {
-	Client client.Client
+	Client   client.Client
+	Recorder events.EventRecorder
 }
 
 // SetupWithManager registers the controller with the manager.
@@ -44,8 +45,6 @@ type claimBindingResult struct {
 
 // Reconcile handles a single Pod event.
 func (r *PodReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	log := ctrl.LoggerFrom(ctx)
-
 	var pod corev1.Pod
 	if err := r.Client.Get(ctx, req.NamespacedName, &pod); err != nil {
 		return reconcile.Result{}, client.IgnoreNotFound(err)
@@ -65,18 +64,24 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req reconcile.Request) (r
 		return reconcile.Result{}, nil
 	}
 
-	imageConfigs, err := collectImageConfigs(ctx, claims)
+	imageConfigs, err := r.collectImageConfigs(claims)
 	if err != nil {
+		if r.Recorder != nil {
+			r.Recorder.Eventf(&pod, nil, corev1.EventTypeWarning, "ImageConfigError", "CollectImageConfig", "Configuration error in ImageConfig: %v", err)
+		}
 		return reconcile.Result{}, err
 	}
 	if len(imageConfigs) == 0 {
-		return reconcile.Result{}, reconcile.TerminalError(fmt.Errorf("no valid ImageConfig found in claims matching the pod containers %s", req.NamespacedName))
+		err := reconcile.TerminalError(fmt.Errorf("no valid ImageConfig found in claims matching the pod containers %s", req.NamespacedName))
+		if r.Recorder != nil {
+			r.Recorder.Eventf(&pod, nil, corev1.EventTypeWarning, "ImageConfigNotFound", "CollectImageConfig", "Configuration error in ImageConfig: %v", err)
+		}
+		return reconcile.Result{}, err
 	}
 
 	if err := r.patchImages(ctx, &pod, imageConfigs); err != nil {
 		return reconcile.Result{}, err
 	}
-	log.Info("image patched", "pod", req.NamespacedName)
 
 	for _, cbr := range bindingResults {
 		if err := r.setBindingCondition(ctx, cbr); err != nil {
@@ -152,8 +157,7 @@ func collectPendingBindingResults(claims []*resourceapi.ResourceClaim) []claimBi
 // configs across all claims. Configs whose Opaque.Driver targets a different
 // driver are skipped so that a ResourceClaim may carry configs for multiple
 // drivers.
-func collectImageConfigs(ctx context.Context, claims []*resourceapi.ResourceClaim) ([]*imagev1alpha1.ImageConfig, error) {
-	log := ctrl.LoggerFrom(ctx)
+func (r *PodReconciler) collectImageConfigs(claims []*resourceapi.ResourceClaim) ([]*imagev1alpha1.ImageConfig, error) {
 	decoder := imagev1alpha1.Codec.UniversalDeserializer()
 	var imageConfigs []*imagev1alpha1.ImageConfig
 	imageMap := make(map[string]string)
@@ -163,8 +167,10 @@ func collectImageConfigs(ctx context.Context, claims []*resourceapi.ResourceClai
 			// whether such a config was intentionally authored by the user, and
 			// there is no way to determine which device the config applies to.
 			if len(cfg.Requests) == 0 {
-				log.Info("skipping device config with empty Requests; set spec.devices.config[].requests to target specific device requests",
-					"claim", klog.KObj(claim), "source", cfg.Source)
+				if r.Recorder != nil {
+					r.Recorder.Eventf(claim, nil, corev1.EventTypeWarning, "EmptyDeviceConfigRequests",
+						"CollectImageConfig", "Device config from %q has empty Requests; set spec.devices.config[].requests to target specific device requests", cfg.Source)
+				}
 				continue
 			}
 			if cfg.Opaque == nil || cfg.Opaque.Driver != DriverName {
@@ -211,7 +217,9 @@ func isBindingConditionAlreadySet(claim *resourceapi.ResourceClaim, result *reso
 }
 
 // patchImages updates container images on the pod according to the provided ImageConfigs.
+// It emits a Pod event describing whether images were patched or already verified.
 func (r *PodReconciler) patchImages(ctx context.Context, pod *corev1.Pod, imageConfigs []*imagev1alpha1.ImageConfig) error {
+	log := ctrl.LoggerFrom(ctx)
 	needsUpdate := false
 	for _, ic := range imageConfigs {
 		matched := false
@@ -237,14 +245,22 @@ func (r *PodReconciler) patchImages(ctx context.Context, pod *corev1.Pod, imageC
 		apply(pod.Spec.Containers)
 
 		if !matched {
+			if r.Recorder != nil {
+				r.Recorder.Eventf(pod, nil, corev1.EventTypeWarning, "ImageConfigContainerNotFound", "PatchImage", "containerName %s in ImageConfig doesn't match any container in pod", ic.ContainerName)
+			}
 			return reconcile.TerminalError(fmt.Errorf("containerName %s in ImageConfig doesn't match any container in pod %s/%s", ic.ContainerName, pod.Namespace, pod.Name))
 		}
 	}
 	if !needsUpdate {
+		log.Info("image verified")
 		return nil
 	}
 	if err := r.Client.Update(ctx, pod); err != nil {
 		return fmt.Errorf("update pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	log.Info("image patched")
+	if r.Recorder != nil {
+		r.Recorder.Eventf(pod, nil, corev1.EventTypeNormal, "ImagePatched", "PatchImage", "Container image(s) updated based on ResourceClaim config")
 	}
 	return nil
 }
