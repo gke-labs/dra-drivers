@@ -62,7 +62,8 @@ func main() {
 	}
 
 	if err := (&controller.PodReconciler{
-		Client: mgr.GetClient(),
+		Client:   mgr.GetClient(),
+		Recorder: mgr.GetEventRecorder(controller.DriverName),
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "unable to create controller")
 		os.Exit(1)
