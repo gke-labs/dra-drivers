@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	imagev1alpha1 "github.com/gke-labs/dra-drivers/dra-driver-image-configurator/api/v1alpha1"
 	controller "github.com/gke-labs/dra-drivers/dra-driver-image-configurator/internal/controller"
 	"k8s.io/client-go/kubernetes"
 	resourceslice "k8s.io/dynamic-resource-allocation/resourceslice"
@@ -34,7 +35,7 @@ func main() {
 	_, err = resourceslice.StartController(
 		context.Background(),
 		resourceslice.Options{
-			DriverName: controller.DriverName,
+			DriverName: imagev1alpha1.DriverName,
 			KubeClient: kubeClient,
 			Resources:  makeDriverResources(),
 		},
@@ -46,7 +47,7 @@ func main() {
 
 	mgr, err := ctrl.NewManager(config, ctrl.Options{
 		LeaderElection:   true,
-		LeaderElectionID: controller.DriverName,
+		LeaderElectionID: imagev1alpha1.DriverName,
 		Cache: cache.Options{
 			ByObject: map[client.Object]cache.ByObject{
 				// Cache only pods that the scheduler has nominated to a node.
@@ -63,7 +64,7 @@ func main() {
 
 	if err := (&controller.PodReconciler{
 		Client:   mgr.GetClient(),
-		Recorder: mgr.GetEventRecorder(controller.DriverName),
+		Recorder: mgr.GetEventRecorder(imagev1alpha1.DriverName),
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "unable to create controller")
 		os.Exit(1)

@@ -3,7 +3,8 @@ TAG ?= latest
 
 .PHONY: build
 build:
-	go build -o bin/controller .
+	go build -o bin/controller ./cmd/controller
+	go build -o bin/webhook ./cmd/webhook
 
 .PHONY: gofmt
 gofmt:

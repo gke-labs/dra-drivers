@@ -90,3 +90,4 @@ spec:
         - name: controller
           image: registry.k8s.io/dra-driver-image-configurator:latest
           imagePullPolicy: IfNotPresent
+          command: ["/controller"]
