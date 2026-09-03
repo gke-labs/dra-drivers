@@ -250,11 +250,11 @@ Follow the [dra-driver-noop
 README](https://github.com/gke-labs/dra-drivers/tree/main/dra-driver-noop) to
 deploy it with `driverNames: "image-configurator.x-k8s.io"`.
 
-### 3. Install cert-manager
+### 3. (Optional) Install cert-manager
 
 The validating admission webhook is served over TLS, and its certificate is
-issued by [cert-manager](https://cert-manager.io/). Install it before deploying
-the controller:
+issued by [cert-manager](https://cert-manager.io/). Install cert-manager only
+if you want to enable the validating admission webhook in the next step:
 
 ```bash
 helm install \
@@ -268,7 +268,35 @@ helm install \
   cert-manager
 ```
 
-### 4. Deploy the controller
+### 4. (Optional) Deploy the validating admission webhook
+
+The validating admission webhook checks `ResourceClaim` and
+`ResourceClaimTemplate` configurations before they are created.
+Deploy it after cert-manager has been installed if you want this validation:
+
+```bash
+kubectl apply -f deploy/webhook.yaml
+```
+
+Confirm that the webhook Pod is running and ready:
+
+```bash
+kubectl get pods \
+  -l app=dra-driver-image-configurator-webhook \
+  -n kube-system
+```
+
+Expected output:
+
+```
+NAME                                           READY   STATUS    RESTARTS   AGE
+dra-driver-image-configurator-webhook-xxxxx   1/1     Running   0          10s
+```
+
+If you do not need validating admission, skip steps 3 and 4 and continue with
+the controller deployment.
+
+### 5. Deploy the controller
 
 The controller publishes the `image-configurator.x-k8s.io` ResourceSlice and
 watches Pods for pending binding conditions.
@@ -316,7 +344,7 @@ spec:
 
 </details>
 
-### 5. Apply the DeviceClass
+### 6. Apply the DeviceClass
 
 ```bash
 kubectl apply -f deploy/deviceclass.yaml
